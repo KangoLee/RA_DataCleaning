@@ -1,0 +1,175 @@
+---
+title: "Canopy/Grub Extraction for Graces"
+author: "Kango Lee"
+date: "2023-10-10"
+---
+
+```{r - vaisala validation}
+
+#setup
+library("stringr") #install.packages("stringr")
+library(tidyverse)
+library(lubridate)
+library("haven") #install.packages("haven")
+library(chron) #install.packages("chron")
+
+foldername = "Bishan Campaign_15072021_03022022" #Bishan Campaign_15072021_03022022 #Vaisala_10042023_08052023
+
+filename = "DataLog5_DATA_TABLE.dat" #DataLog1_DATA_TABLE.dat, Vaisala 1,2,3,4,5 S1_1004_0805_2023.dat, Vaisala 6,7,8,9
+vaisala_folder = "For Validation (Vaisala)"
+
+date_input = "2022-01" #Dec (12) WT0: Dec (12), WT1: Jan (01), WT2: Jul (07), WT3 Apr (04), WT4: Oct (10), 2022 for Jan, 2021 for everything else!
+newfilename = "WT1"
+
+#importing data
+
+df <- read_csv(paste("WT_Validation_Kango", "/", "Vaisala", "/", foldername, "/", filename, sep = ""))
+
+col_name <- names(df)[1] 
+
+df <- df %>%
+  separate(col = col_name, into = c("TIMESTAMP",	"RECORD","BGTemp_C_Avg",	"WS_mean",	"WV_magnitude_mean",	"WD_mean",	"Temp_Avg",	"Rel_Hum_Avg",	"RF_acc_sum",	"RF_dur_sum",	"RF_int_avg",	"AirTC_Avg",	"RH",	"BattV_Min",	"SPN1_GHI_Avg",	"SPN1_DIF_Avg",	"SPN1_DNI_Avg"), sep = ",", fill = "right", remove = FALSE)
+
+hour_list <- list(
+  "00", "01", "02", "03", "04", "05", "06", "07", "08", "09",
+  "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+  "20", "21", "22", "23"
+)
+
+if (date_input == "2022-01" || date_input == "2021-12" || date_input == "2021-07" || date_input == "2021-10" || date_input == "2021-08") {
+  day_list <- list("01", "02", "03", "04", "05", "06", "07", "08", "09",
+                   "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+                   "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31")
+} else if (date_input == "2023-04") {
+  day_list <- list("10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+                   "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30")
+} else {
+  day_list <- list("01", "02", "03", "04", "05", "06", "07", "08", "09",
+                   "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+                   "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30")
+}
+
+#vaisala 1 WT2
+if (filename == "DataLog1_DATA_TABLE.dat" && newfilename == "WT2" ){
+  day_list <- list("16", "17", "18", "19",
+                   "20")
+}
+
+#vaisala 2,3,4,5 WT2
+if ((filename == "DataLog2_DATA_TABLE.dat" || filename == "DataLog3_DATA_TABLE.dat" || filename == "DataLog4_DATA_TABLE.dat" || filename == "DataLog5_DATA_TABLE.dat") && newfilename == "WT2" ){
+  day_list <- list("16", "17", "18", "19",
+                   "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31")
+}
+
+#vaisala 4 WT0
+if (filename == "DataLog4_DATA_TABLE.dat" && newfilename == "WT0" ){
+  day_list <- list("01", "02", "03", "04", "05", "06", "07")
+}
+
+#data cleaning (for specific)
+
+df1 <- df[str_detect(df$TIMESTAMP, date_input),] #removes rows that are not date_input
+
+#creating new df 
+output_df <- data.frame()
+output_df$Date <- c()
+output_df$Hour <- c()
+output_df$Mean_Air_Temp <- c()
+output_df$Mean_RH <- c()
+output_df$Mean_MRT <- c()
+
+#calculating mean of each microclimatic data for each hour
+#CREATE FOR LOOP FOR DATE
+output_df2 <- output_df
+for (hour in hour_list){
+  output_df1 <- output_df 
+  for (day in day_list){
+    date_input1 <- paste(date_input,"-",day , " ", hour, sep = "")
+    df2 <- df1[str_detect(df1$TIMESTAMP, date_input1),] #removes rows that are not 
+    
+    df2$Temp_Avg <- as.numeric(df2$Temp_Avg)
+    mean_air_temp <- mean(df2$Temp_Avg, na.rm = TRUE)
+    
+    df2$Rel_Hum_Avg <- as.numeric(df2$Rel_Hum_Avg)
+    mean_relative_humidity <- mean(df2$Rel_Hum_Avg, na.rm = TRUE)
+    
+    df2$BGTemp_C_Avg <- as.numeric(df2$BGTemp_C_Avg) #BGTemp_C_Avg is character, need to change to numeric
+    mean_MRT <- mean(df2$BGTemp_C_Avg, na.rm = TRUE)
+    
+    #mean_GHI <- mean(df$GHI) #get GHI for the S1 - S4
+    output_df1 <- rbind(output_df1, c(date_input, paste(hour, "00", sep = ""), mean_air_temp, mean_relative_humidity, mean_MRT))
+  }
+  colnames(output_df1) <- c("Date", "Hour", "Mean_Air_Temp", "Mean_Relative_Humidity", "Mean_MRT")
+  output_df1$Mean_Air_Temp <- as.numeric(output_df1$Mean_Air_Temp)
+  mean_air_temp_day <- mean(output_df1$Mean_Air_Temp, na.rm = TRUE)
+  output_df1$Mean_Relative_Humidity <- as.numeric(output_df1$Mean_Relative_Humidity)
+  mean_relative_humidity_day <- mean(output_df1$Mean_Relative_Humidity, na.rm = TRUE)
+  output_df1$Mean_MRT <- as.numeric(output_df1$Mean_MRT)
+  mean_MRT_day <- mean(output_df1$Mean_MRT, na.rm = TRUE)
+  
+  output_df2 <- rbind(output_df2, c(date_input, paste(hour, "00", sep = ""), mean_air_temp_day, mean_relative_humidity_day, mean_MRT_day))
+}
+
+
+#renaming output_df columns
+colnames(output_df2) <- c("Date", "Hour", "Mean Air Temp.", "Mean Relative Humidity", "Mean MRT")
+
+#exporting data
+
+output_df2$Hour <- format(as.POSIXct(output_df2$Hour, format = "%H%M"), "%H%M")
+
+write_csv(output_df2, file = paste("WT_Validation_Kango", "/", "Vaisala", "/", vaisala_folder, "/", newfilename, ".csv", sep = "")) #creates a .csv file in directory
+
+```
+
+```{r - envi-met validation}
+
+#setup
+library("stringr") #install.packages("stringr")
+library(tidyverse)
+library(lubridate)
+library("haven") #install.packages("haven")
+library(chron) #install.packages("chron")
+
+foldername = "WT3_Grub" #WT1_Grub #WT2_Grub #WT4_Grub
+
+#for output
+newfilename <- "Vaisala 8"
+vaisala_x_coords <- 112 #115, 56, 78, 108, 70
+vaisala_y_coords <- 100 #128, 115, 110, 104, 110
+
+#creating new df 
+output_df <- data.frame()
+output_df$Hour <- c()
+output_df$Mean_Air_Temp <- c()
+output_df$Mean_RH <- c()
+output_df$Mean_MRT <- c()
+
+#importing data
+
+hour_list <- list("07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19")
+weather_type_list <- list("ta","rh","mrt")
+
+#data extraction
+
+for (hour in hour_list){
+  weather_type_by_hour_vector <- list(paste(hour,"00", sep = ""))
+  for (weather_type in weather_type_list){
+    filename = paste(foldername, "_BL_", weather_type, "_", hour, "00.csv", sep = "")
+    df1 <- read_csv(paste("WT_Validation_Kango", "/", "ENVI-met Outputs", "/", foldername, "/", filename, sep = ""))
+    row_num <- which(df1[, 1] == vaisala_y_coords)
+    col_name <- as.character(vaisala_x_coords)
+    data <- df1[[row_num, col_name]]
+    weather_type_by_hour_vector <- c(weather_type_by_hour_vector,data)
+  }
+  output_df <- rbind(output_df, weather_type_by_hour_vector)
+}
+
+colnames(output_df) <- c("Hour", "Air Temp.", "Relative Humidity", "MRT")
+
+#exporting data
+write_csv(output_df, file = paste("WT_Validation_Kango", "/", "ENVI-met Outputs", "/", "For Validation (ENVI-met)", "/", newfilename, ".csv", sep = "")) #creates a .csv file in directory
+
+
+```
+
