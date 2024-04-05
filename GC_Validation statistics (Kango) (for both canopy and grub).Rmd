@@ -1,0 +1,329 @@
+
+title: "Validation for ENVI-met"
+author: "Kango Lee"
+date: "2024-02-05"
+output: html_document
+---
+
+Import required libraries for validation, the ENVI-met receptor data (clean) and the Vaisala data (clean)
+```{r - libraries and input}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(lubridate)
+library(stargazer)
+
+WT <- "WT0" #enter weather type here
+area_type <- "Grub" #enter your WT type here (Grub, Canopy or [Grub, Canopy] for both) #
+data_type = "vaisala" #pick "vaisala" or "hobo"
+destination_folder = "Validation_ENVImet"
+site_selections = list(1,2,3,4,5,6,7,8,9) #enter what sites you want (for vaisala and hobo) (JUST THE NUMBER!!!)
+name_change = TRUE #if true, you want to rename it, if false, you don't
+site_text = "Site"
+area_text = "Area"
+year_input = "2023" #enter what year the dates are in
+
+```
+
+
+```{r - code}
+
+type = list("Grub", "Canopy")
+stats = matrix(NA,nrow = 0, ncol = 0) 
+
+for (curr_type in type){
+  full_WT <- paste(WT,"_",curr_type, sep="")
+
+  envi_files <- list()
+  obs_files <- list()
+  data_files <- list()
+  
+  #"Vaisala \\d" (for Vaisala XX files) or "H\\d+" (for HXX files)
+  if (data_type == "hobo"){ 
+    envi_type = "H\\d+"
+    micro_climate <- list("Air Temp.","Relative Humidity")
+    data_path = "For Validation (HOBO)"
+    } else {
+    envi_type = "Vaisala \\d"
+    micro_climate <- list("Air Temp.","Relative Humidity","MRT")
+    data_path = "For Validation (Vaisala)"
+    }
+  
+  envi_subfolders <- list.dirs(path = "For Validation (ENVI-met)", recursive = FALSE) #getting folders from envi-met validation folder
+  obs_subfolders <- list.dirs(path = data_path,  recursive = FALSE) #getting folders from vaisala or HOBO validation folder
+  
+  #function to read csv
+  process_file <- function(file_path) { 
+    df <- read_csv(file_path)
+    return(df)
+  }
+  
+  #determining which files and folders are required for analysis
+  
+  for (subfolder in envi_subfolders) {
+    if (grepl(full_WT,subfolder)==TRUE){ # Get all folders in the current envi-met subfolder that has WTX
+      envi_files <- append(envi_files, list.files(path=subfolder, full.names=TRUE, recursive=TRUE)) #get the names of all envi-met files for processing
+      data_files <- append(data_files, list.files(path=subfolder)) #get the names of all vaisala/hobo files for processing
+    }
+  }
+  
+  #removing file names without Vaisala (or H) from envi_files
+  indices <- grepl(envi_type, envi_files)
+  envi_files <- envi_files[indices]
+  
+  #removing file names without Vaisala (or H) from data_files
+  indices <- grepl(envi_type, data_files)
+  data_files <- data_files[indices]
+  
+  for (subfolder in obs_subfolders){ #finding all required vaisala files for obs
+    for (data_file in data_files){
+      data <- substr(data_file,1,nchar(data_file) - 4) #removing ".csv"
+      if (grepl(data,subfolder)==TRUE){ #Get all files in the current data subfolder that correspond to required data files
+        obs_files <- append(obs_files, list.files(path=subfolder, pattern = WT, full.names=TRUE, recursive=TRUE))} #Get all files in the current data subfolder that has WTX
+    }
+  }
+  
+  #run analysis on each vaisala/H file for envi-met and data (obs)
+  for (envi_file in envi_files){
+    data <- str_extract(envi_file, envi_type) #processing one vaisala/H each time in the for-loop
+    envi_LK <- read_csv(envi_file) 
+    for (obs_file in obs_files){
+      if (grepl(data,obs_file)){
+        obs_LK <- read_csv(obs_file)
+        if (data_type == "hobo"){
+          obs_LK <- obs_LK[, c(2:5)]
+          obs_LK$Month <- as.character(obs_LK$Month)
+          obs_LK$Hour <- as.character(obs_LK$Hour)
+          obs_LK$Month <- paste(year_input, obs_LK$Month, sep="-")
+          colnames(obs_LK)[1] = "Date"
+          for (i in 1:nrow(obs_LK)){
+            if (nchar(obs_LK[i, "Hour"]) == 1){
+              obs_LK[i,"Hour"] <- paste("0", obs_LK[i,"Hour"], "00", sep="")
+            } else {
+              obs_LK[i,"Hour"] <- paste(obs_LK[i,"Hour"], "00", sep="")
+            }
+          }
+        }
+        hours_to_remove <- c("0000", "0100", "0200", "0300", "0400", "0500", "0600", "2000", "2100", "2200", "2300") 
+        obs_LK <- obs_LK[!obs_LK$Hour %in% hours_to_remove, , drop = FALSE]
+      site_LK <- cbind(envi_LK, obs_LK)
+      if (data_type == "vaisala"){
+        site_LK <- site_LK[, c(5,1,2:4,7:9)]
+        colnames(site_LK) <- c("Date", "Hour", "Air_Temp_C", "q.rel", "MRT", "Temp_C_obs", "RH_obs", "MRT_obs")
+      } else {
+        site_LK <- site_LK[, c(4,1,2:3,6:7)]
+        colnames(site_LK) <- c("Date", "Hour", "Air_Temp_C", "q.rel", "Temp_C_obs", "RH_obs")
+      }
+      stats_date <- site_LK[1,1]
+      
+      #start of analysis (copied over from original GC_Validation statistics.Rmd)
+      
+      #Temp analysis
+      #create a linear regression_Ta
+      LK_envi_airT_lm <- lm(Temp_C_obs~Air_Temp_C, site_LK)
+      
+      #site specific calculations_Ta
+      LK_airT_stats <- matrix(NA,nrow = dim(site_LK)[1], ncol = 11)
+      colnames(LK_airT_stats) <- c("Obs", "ENVI", "ENVI_SquareError", "ENVI_PredictedY","ENVI_M-O_Squared", "ENVI_M-Py_Squared", "ENVI_O-meanO", "ENVI_P-meanP", "ENVI_O-meanO_-_P-meanP_squared", "ENVI_BiasError", "ENVI_AbsError")
+      for(i in 1:dim(site_LK)[1]){
+        LK_airT_stats[i,1] <- site_LK$Temp_C_obs[i]
+        LK_airT_stats[i,2] <- site_LK$Air_Temp_C[i]
+        LK_airT_stats[i,3] <- (LK_airT_stats[i,2]-LK_airT_stats[i,1])^2
+        LK_airT_stats[i,4] <- LK_envi_airT_lm$fitted.values[i]
+        LK_airT_stats[i,5] <- (LK_airT_stats[i,4]-LK_airT_stats[i,1])^2
+        LK_airT_stats[i,6] <- (LK_airT_stats[i,4]-LK_airT_stats[i,2])^2
+        LK_airT_stats[i,7] <- LK_airT_stats[i,1]-mean(site_LK$Temp_C_obs)
+        LK_airT_stats[i,8] <- LK_airT_stats[i,2]-mean(site_LK$Temp_C_obs)
+        LK_airT_stats[i,9] <- (abs(LK_airT_stats[i,7])+abs(LK_airT_stats[i,8]))^2
+        LK_airT_stats[i,10] <- LK_airT_stats[i,2]-LK_airT_stats[i,1]
+        LK_airT_stats[i,11] <- abs(LK_airT_stats[i,2]-LK_airT_stats[i,1])
+        }
+        LK_airT_stats <- as_tibble(LK_airT_stats)
+        
+      #site validation statistics
+      stats_airtemp <- matrix(NA,nrow = 1, ncol = 9) 
+      colnames(stats_airtemp) <- c(" ", "Area", "Site", "R-Squared", "RMSE", "RMSEs", "RMSEu", "MBE", "Willmott's Index of Agreement (d)")
+      stats_airtemp[1,1] <- "Ta"
+      stats_airtemp[1,2] <- curr_type
+      stats_airtemp[1,3] <- data
+      stats_airtemp[1,4] <- summary(LK_envi_airT_lm)$r.squared
+      stats_airtemp[1,5] <- sqrt(mean(LK_airT_stats$ENVI_SquareError))
+      stats_airtemp[1,6] <- sqrt(mean(LK_airT_stats$`ENVI_M-O_Squared`))
+      stats_airtemp[1,7] <- sqrt(mean(LK_airT_stats$`ENVI_M-Py_Squared`))
+      stats_airtemp[1,8] <- mean(LK_airT_stats$ENVI_BiasError)
+      stats_airtemp[1,9] <- 1-(sum(LK_airT_stats$ENVI_SquareError)/sum(LK_airT_stats$`ENVI_O-meanO_-_P-meanP_squared`))
+      
+      #RH analysis
+      #create a linear regression_RH
+      LK_envi_RH_lm <- lm(RH_obs~q.rel, site_LK)
+      
+      #site specific calculations_RH
+      LK_RH_stats <- matrix(NA,nrow = dim(site_LK)[1], ncol = 11)
+      colnames(LK_RH_stats) <- c("Obs", "ENVI", "ENVI_SquareError", "ENVI_PredictedY", "ENVI_M-O_Squared", "ENVI_M-Py_Squared", "ENVI_O-meanO", "ENVI_P-meanP", "ENVI_O-meanO_-_P-meanP_squared", "ENVI_BiasError", "ENVI_AbsError")
+      for(i in 1:dim(site_LK)[1]){
+        LK_RH_stats[i,1] <- site_LK$RH_obs[i]
+        LK_RH_stats[i,2] <- site_LK$q.rel[i]
+        LK_RH_stats[i,3] <- (LK_RH_stats[i,2]-LK_RH_stats[i,1])^2
+        LK_RH_stats[i,4] <- LK_envi_RH_lm$fitted.values[i]
+        LK_RH_stats[i,5] <- (LK_RH_stats[i,4]-LK_RH_stats[i,1])^2
+        LK_RH_stats[i,6] <- (LK_RH_stats[i,4]-LK_RH_stats[i,2])^2
+        LK_RH_stats[i,7] <- LK_RH_stats[i,1]-mean(site_LK$RH_obs)
+        LK_RH_stats[i,8] <- LK_RH_stats[i,2]-mean(site_LK$RH_obs)
+        LK_RH_stats[i,9] <- (abs(LK_RH_stats[i,7])+abs(LK_RH_stats[i,8]))^2
+        LK_RH_stats[i,10] <- LK_RH_stats[i,2]-LK_RH_stats[i,1]
+        LK_RH_stats[i,11] <- abs(LK_RH_stats[i,2]-LK_RH_stats[i,1])
+      }
+      LK_RH_stats <- as_tibble(LK_RH_stats)
+      
+      #site validation statistics
+      stats_RH <- matrix(NA,nrow = 1, ncol = 9) 
+      colnames(stats_RH) <- c(" ", "Area", "Site", "R-Squared", "RMSE", "RMSEs", "RMSEu", "MBE", "Willmott's Index of Agreement (d)")
+      stats_RH[1,1] <- "RH"
+      stats_RH[1,2] <- curr_type
+      stats_RH[1,3] <- data
+      stats_RH[1,4] <- summary(LK_envi_RH_lm)$r.squared
+      stats_RH[1,5] <- sqrt(mean(LK_RH_stats$ENVI_SquareError))
+      stats_RH[1,6] <- sqrt(mean(LK_RH_stats$`ENVI_M-O_Squared`))
+      stats_RH[1,7] <- sqrt(mean(LK_RH_stats$`ENVI_M-Py_Squared`))
+      stats_RH[1,8] <- mean(LK_RH_stats$ENVI_BiasError)
+      stats_RH[1,9] <- 1-(sum(LK_RH_stats$ENVI_SquareError)/sum(LK_RH_stats$`ENVI_O-meanO_-_P-meanP_squared`))
+      
+      #MRT analysis (only runs if data_type = vaisala)
+      if (data_type == "vaisala"){
+        #create a linear regression_MRT
+        LK_envi_MRT_lm <- lm(MRT_obs~MRT, site_LK)
+      #site specific calculations_MRT
+        LK_MRT_stats <- matrix(NA,nrow = dim(site_LK)[1], ncol = 11)
+        colnames(LK_MRT_stats) <- c("Obs", "ENVI", "ENVI_SquareError", "ENVI_PredictedY", "ENVI_M-O_Squared", "ENVI_M-Py_Squared", "ENVI_O-meanO", "ENVI_P-meanP", "ENVI_O-meanO_-_P-meanP_squared", "ENVI_BiasError", "ENVI_AbsError")
+        for(i in 1:dim(site_LK)[1]){
+          LK_MRT_stats[i,1] <- site_LK$MRT_obs[i]
+          LK_MRT_stats[i,2] <- site_LK$MRT[i]
+          LK_MRT_stats[i,3] <- (LK_MRT_stats[i,2]-LK_MRT_stats[i,1])^2
+          LK_MRT_stats[i,4] <- LK_envi_MRT_lm$fitted.values[i]
+          LK_MRT_stats[i,5] <- (LK_MRT_stats[i,4]-LK_MRT_stats[i,1])^2
+          LK_MRT_stats[i,6] <- (LK_MRT_stats[i,4]-LK_MRT_stats[i,2])^2
+          LK_MRT_stats[i,7] <- LK_MRT_stats[i,1]-mean(site_LK$MRT_obs)
+          LK_MRT_stats[i,8] <- LK_MRT_stats[i,2]-mean(site_LK$MRT_obs)
+          LK_MRT_stats[i,9] <- (abs(LK_MRT_stats[i,7])+abs(LK_MRT_stats[i,8]))^2
+          LK_MRT_stats[i,10] <- LK_MRT_stats[i,2]-LK_MRT_stats[i,1]
+          LK_MRT_stats[i,11] <- abs(LK_MRT_stats[i,2]-LK_MRT_stats[i,1])
+        }
+        LK_MRT_stats <- as_tibble(LK_MRT_stats)
+        
+        #site validation statistics
+        stats_MRT <- matrix(NA,nrow = 1, ncol = 9) 
+        colnames(stats_MRT) <- c(" ", "Area", "Site", "R-Squared", "RMSE", "RMSEs", "RMSEu", "MBE", "Willmott's Index of Agreement (d)")
+        stats_MRT[1,1] <- "MRT"
+        stats_MRT[1,2] <- curr_type
+        stats_MRT[1,3] <- data
+        stats_MRT[1,4] <- summary(LK_envi_MRT_lm)$r.squared
+        stats_MRT[1,5] <- sqrt(mean(LK_MRT_stats$ENVI_SquareError))
+        stats_MRT[1,6] <- sqrt(mean(LK_MRT_stats$`ENVI_M-O_Squared`))
+        stats_MRT[1,7] <- sqrt(mean(LK_MRT_stats$`ENVI_M-Py_Squared`))
+        stats_MRT[1,8] <- mean(LK_MRT_stats$ENVI_BiasError)
+        stats_MRT[1,9] <- 1-(sum(LK_MRT_stats$ENVI_SquareError)/sum(LK_MRT_stats$`ENVI_O-meanO_-_P-meanP_squared`))
+      }
+      
+      #export data into table and csv
+      #create the table_Ta
+      stats_airtemp <- as_tibble(stats_airtemp)
+      stats <- rbind(stats, stats_airtemp)
+      #create the table_RH
+      stats_RH <- as_tibble(stats_RH)
+      stats <- rbind(stats, stats_RH)
+      # create the table_MRT
+      if (data_type == "vaisala"){
+      stats_MRT <- as_tibble(stats_MRT)
+      stats <- rbind(stats, stats_MRT)
+      }
+      }
+    }
+  }
+}
+
+stats <- stats[order(stats[["Site"]]), ]
+
+if (data_type == "vaisala"){
+  for (i in seq_along(site_selections)) {
+    site_selections[i] <- paste(str_to_title(data_type), " ", as.character(site_selections[i]), sep = "")}
+  } else {
+    for (i in seq_along(site_selections)) {
+      site_selections[i] <- paste("H0", as.character(site_selections[i]), sep = "")}
+  }
+
+stats_filtered <- stats[stats$Site %in% site_selections, ]
+
+if (area_type == "[Grub, Canopy]"){
+  full_WT <- paste(WT,"_Canopy_and_Grub", sep="")
+} else {
+  full_WT <- paste(WT, "_", area_type, sep="")
+}
+
+value_list1 = list("1", "2", "3", "4", "5")
+value_list2 = list("6", "7", "8", "9")
+
+# changing the names of sites
+
+if (data_type == "vaisala" & name_change == TRUE) {
+  for (i in 1:nrow(stats_filtered)) {
+    if (any(grepl(paste(value_list1, collapse = "|"), stats_filtered$Site[i]))){ #CHANGE VALUE LIST 2
+      stats_filtered$Site[i] <- paste(substr(stats_filtered$Site[i], 1,1), "0", substr(stats_filtered$Site[i], 9,9), sep="")
+    } else if (any(grepl(paste(value_list2, collapse = "|"), stats_filtered$Site[i]))) {
+      if (stats_filtered$Site[i] == "Vaisala 6") {
+        stats_filtered$Site[i] <- "S01"
+      }
+      if (stats_filtered$Site[i] == "Vaisala 7") {
+        stats_filtered$Site[i] <- "S02"
+      }
+      if (stats_filtered$Site[i] == "Vaisala 8") {
+        stats_filtered$Site[i] <- "S03"
+      }
+      if (stats_filtered$Site[i] == "Vaisala 9") {
+        stats_filtered$Site[i] <- "S04"
+      }
+    }
+  }
+}
+
+# filtering by canopy/grub
+
+if (area_type == "Grub"){
+  stats_filtered <- subset(stats_filtered, Area == "Grub")
+} else if (area_type == "Canopy"){
+  stats_filtered <- subset(stats_filtered, Area == "Canopy")
+}
+
+
+colnames(stats_filtered)[2] = area_text #area
+colnames(stats_filtered)[3] =  site_text#site
+
+write_csv(stats_filtered, paste(destination_folder, "/Fixed_Receptor_stats_",full_WT,".csv", sep=""))
+
+stargazer_airtemp <- stats_filtered[grepl("Ta", stats_filtered$" " ), , drop = FALSE]
+stargazer_humidity <- stats_filtered[grepl("RH", stats_filtered$" " ), , drop = FALSE]
+if (data_type == "vaisala"){ #only runs if data_type if vaisala
+stargazer_mrt <- stats_filtered[grepl("MRT", stats_filtered$" " ), , drop = FALSE]
+}
+
+stargazer_airtemp[,4:9] <- lapply(stargazer_airtemp[,4:9], as.numeric) #convert to numeric
+stargazer_airtemp[,4:9] <- round(stargazer_airtemp[,4:9], digits = 2) #convert to 2 dp
+stargazer_humidity[,4:9] <- lapply(stargazer_humidity[,4:9], as.numeric) #convert to numeric
+stargazer_humidity[,4:9] <- round(stargazer_humidity[,4:9], digits = 2) #convert to 2 dp
+if (data_type == "vaisala"){
+stargazer_mrt[,4:9] <- lapply(stargazer_mrt[,4:9], as.numeric) #convert to numeric
+stargazer_mrt[,4:9] <- round(stargazer_mrt[,4:9], digits = 2) #convert to 2 dp
+}
+
+final_date <- paste(month.abb[as.numeric((strsplit(stats_date,"-"))[[1]][2])]," ",(strsplit(stats_date,"-"))[[1]][1],sep="") #converting date
+
+stargazer(stargazer_airtemp, type = "html", summary = FALSE, rownames=FALSE, title = "Air Temperature (°C) Receptor Validation Metrics", out = paste(destination_folder, "/Ta_Validation_", final_date, "_", full_WT,"_Table.html",sep=""))
+
+stargazer(stargazer_humidity, type = "html", summary = FALSE, rownames=FALSE, title = "Relative Humidity (%) Receptor Validation Metrics", out = paste(destination_folder, "/RH_Validation_", final_date, "_", full_WT,"_Table.html",sep=""))
+
+if (data_type == "vaisala"){
+stargazer(stargazer_mrt, type = "html", summary = FALSE, rownames=FALSE, title = "Mean Radiant Temperature (°C) Receptor Validation Metrics", out = paste(destination_folder, "/MRT_Validation_", final_date, "_", full_WT,"_Table.html",sep=""))
+}
+
+
+```
+
