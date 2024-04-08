@@ -1,4 +1,4 @@
-
+---
 title: "Validation for ENVI-met"
 author: "Kango Lee"
 date: "2024-02-05"
@@ -13,11 +13,11 @@ library(tidyverse)
 library(lubridate)
 library(stargazer)
 
-WT <- "WT0" #enter weather type here
-area_type <- "Grub" #enter your WT type here (Grub, Canopy or [Grub, Canopy] for both) #
-data_type = "vaisala" #pick "vaisala" or "hobo"
+WT <- "WT3" #enter weather type here
+area_type <- "Canopy" #enter your WT type here (Grub, Canopy or [Grub, Canopy] for both) #
+data_type = "hobo" #pick "vaisala" or "hobo"
 destination_folder = "Validation_ENVImet"
-site_selections = list(1,2,3,4,5,6,7,8,9) #enter what sites you want (for vaisala and hobo) (JUST THE NUMBER!!!)
+site_selections = list(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20) #enter what sites you want (for vaisala and hobo) (JUST THE NUMBER!!!)
 name_change = TRUE #if true, you want to rename it, if false, you don't
 site_text = "Site"
 area_text = "Area"
@@ -62,10 +62,9 @@ for (curr_type in type){
   
   for (subfolder in envi_subfolders) {
     if (grepl(full_WT,subfolder)==TRUE){ # Get all folders in the current envi-met subfolder that has WTX
-      envi_files <- append(envi_files, list.files(path=subfolder, full.names=TRUE, recursive=TRUE)) #get the names of all envi-met files for processing
-      data_files <- append(data_files, list.files(path=subfolder)) #get the names of all vaisala/hobo files for processing
+      envi_files <- append(envi_files, list.files(path=subfolder, full.names=TRUE, recursive=TRUE))} #get the names of all envi-met files for processing
+    data_files <- append(data_files, list.files(path=subfolder)) #get the names of all vaisala/hobo files for processing
     }
-  }
   
   #removing file names without Vaisala (or H) from envi_files
   indices <- grepl(envi_type, envi_files)
@@ -74,6 +73,7 @@ for (curr_type in type){
   #removing file names without Vaisala (or H) from data_files
   indices <- grepl(envi_type, data_files)
   data_files <- data_files[indices]
+  data_files <- as.list(unique(data_files)) #removing duplicates
   
   for (subfolder in obs_subfolders){ #finding all required vaisala files for obs
     for (data_file in data_files){
@@ -248,7 +248,12 @@ if (data_type == "vaisala"){
     site_selections[i] <- paste(str_to_title(data_type), " ", as.character(site_selections[i]), sep = "")}
   } else {
     for (i in seq_along(site_selections)) {
-      site_selections[i] <- paste("H0", as.character(site_selections[i]), sep = "")}
+      if(nchar(as.character(i)) == 2){
+        site_selections[i] <- paste("H", as.character(site_selections[i]), sep = "")
+      } else {
+        site_selections[i] <- paste("H0", as.character(site_selections[i]), sep = "")
+      }
+    }
   }
 
 stats_filtered <- stats[stats$Site %in% site_selections, ]
